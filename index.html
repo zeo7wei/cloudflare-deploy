@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AFU法规AI助理</title>
+    <title>美妆广告合规 AI 助理</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -655,11 +655,9 @@
     <div id="root"></div>
     <script type="text/babel">
         const { useState, useEffect } = React;
-
-        const GEMINI_API_KEY = 'AIzaSyDO69s-TOgi_vG6w2EV57HIcZAqVKCGtfI';
-        const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
+        // 千问API配置
+        const QWEN_API_KEY = 'sk-d89e8cfb1eea4dfd90ddc3f5a8899910';
         
-
         // Vercel API地址（部署后会自动使用正确地址）
         const PROXY_API_URL = '/api/qwen-ocr';
 
@@ -1171,13 +1169,32 @@
             saveKnowledgeBase(newKb);
           };
 
-          const scanWithGemini = async () => {
+          
+          // ====== JSON 容错解析工具（新增）======
+          const extractJsonBlock = (s) => {
+            const m = s.match(/\{[\s\S]*\}/);
+            return m ? m[0] : null;
+          };
+
+          const fixCommonJsonMistakes = (s) => {
+            // 修最常见的 ,]  和 ,}
+            return s.replace(/,\s*]/g, ']').replace(/,\s*}/g, '}');
+          };
+
+const scanWithGemini = async () => {
             if (!textInput.trim()) return alert('请先输入文案');
             if (knowledgeBase.prohibitedWords.allWords.length === 0) {
               return alert('请先上传违禁词清单');
             }
 
             setLoading(true);
+            // ====== 长文本先截断，避免模型输出跑飞（新增）======
+            const SAFE_LEN = 8000; // 先用 8000 保守稳定，之后可升级分段扫描
+            const safeInput =
+              textInput.length > SAFE_LEN
+                ? textInput.slice(0, SAFE_LEN) + '\n\n（内容过长，已截断。建议分段扫描）'
+                : textInput;
+
             try {
               const prompt = `你是美妆广告合规专家。严格检查以下文案中的违规内容：
 
@@ -1186,7 +1203,7 @@
 【同义词表】${knowledgeBase.synonyms.allWords.slice(0, 100).join('、')}
 
 【待检查文案】
-${textInput}
+${safeInput}
 
 请以JSON格式返回检查结果，格式如下：
 {"issues":[{"word":"违禁词","category":"违禁类型","suggestion":"修改建议"}],"warnings":[{"word":"功效词","suggestion":"备案建议"}]}
@@ -1218,17 +1235,45 @@ ${textInput}
               const text = data.output.choices[0].message.content[0].text;
               console.log('AI返回文本:', text);
               
-              // 提取JSON
-              const jsonMatch = text.match(/\{[\s\S]*\}/);
-              if (!jsonMatch) {
-                throw new Error('AI返回格式不正确，无法解析JSON');
-              }
-              
-              const result = JSON.parse(jsonMatch[0]);
+              // ====== 容错解析（替换原来的 JSON.parse 段）======
+              const jsonStr = extractJsonBlock(text);
 
-              setScanResults({
-                issues: result.issues || [],
-                warnings: result.warnings || [],
+              let resultObj = null;
+              if (jsonStr) {
+                try {
+                  resultObj = JSON.parse(fixCommonJsonMistakes(jsonStr));
+                } catch (e) {
+                  // JSON 解析失败：降级为纯文本（仍然算“扫描出问题”）
+                  resultObj = {
+                    issues: [{
+                      word: '返回格式异常',
+                      category: '解析失败',
+                      suggestion: 'AI 返回不是严格 JSON，但扫描已完成。请复制下方原文给法务/再试一次（或缩短文案/分段扫描）。'
+                    }],
+                    warnings: [{
+                      word: 'AI原文',
+                      suggestion: text.slice(0, 2000) // 防止页面太长，先显示前 2000 字
+                    }]
+                  };
+                }
+              } else {
+                // 根本没 JSON：同样降级为纯文本
+                resultObj = {
+                  issues: [{
+                    word: '未返回JSON',
+                    category: '解析失败',
+                    suggestion: 'AI 没有按 JSON 输出，但扫描已完成。请复制下方原文给法务/再试一次（或缩短文案/分段扫描）。'
+                  }],
+                  warnings: [{
+                    word: 'AI原文',
+                    suggestion: text.slice(0, 2000)
+                  }]
+                };
+              }
+
+setScanResults({
+                issues: (resultObj && resultObj.issues) ? resultObj.issues : [],
+                warnings: (resultObj && resultObj.warnings) ? resultObj.warnings : [],
                 scanTime: new Date().toLocaleString('zh-CN'),
                 stats: {
                   prohibitedWordsUsed: knowledgeBase.prohibitedWords.allWords.length,
@@ -1238,7 +1283,7 @@ ${textInput}
               });
             } catch (error) {
               console.error('扫描错误详情:', error);
-              alert('扫描失败：' + error.message + '\n\n请检查：\n1. Gemini API密钥是否有效\n2. 是否有网络连接\n3. 浏览器控制台(F12)查看详细错误');
+              alert('扫描失败：' + error.message + '\n\n请检查：\n1. Cloudflare 环境变量 QWEN_API_KEY 是否配置\n2. 是否有网络连接\n3. 浏览器控制台(F12)查看详细错误');
             }
             setLoading(false);
           };
