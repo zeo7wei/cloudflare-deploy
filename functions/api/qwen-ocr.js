@@ -50,30 +50,41 @@ export async function onRequest(context) {
     }
 
     // 调用千问API
-    const apiKey = env.QWEN_API_KEY || 'sk-d89e8cfb1eea4dfd90ddc3f5a8899910';
-    
-    const response = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'X-DashScope-SSE': 'disable'
+const apiKey = env.QWEN_API_KEY;
+
+if (!apiKey) {
+  return new Response(
+    JSON.stringify({ error: 'QWEN_API_KEY 未配置' }),
+    { status: 500 }
+  );
+}
+
+const response = await fetch(
+  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'X-DashScope-SSE': 'disable'
+    },
+    body: JSON.stringify({
+      model: 'qwen-vl-plus',
+      input: {
+        messages: [
+          {
+            role: 'user',
+            content: messageContent
+          }
+        ]
       },
-      body: JSON.stringify({
-        model: 'qwen-vl-plus',
-        input: {
-          messages: [
-            {
-              role: 'user',
-              content: messageContent
-            }
-          ]
-        },
-        parameters: {
-          result_format: 'message'
-        }
-      })
-    });
+      parameters: {
+        result_format: 'message'
+      }
+    })
+  }
+);
+
 
     if (!response.ok) {
       const errorText = await response.text();
